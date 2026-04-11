@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 	"message-broker-benchmark/internal/broker/rabbitmq"
+	"sort"
 	"sync"
 	"time"
 )
@@ -22,12 +23,15 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	defer func(b *rabbitmq.RabbitMQ) {
-		err := b.Close()
-		if err != nil {
+	defer func() {
+		if err := b.Close(); err != nil {
 			log.Fatal(err)
 		}
-	}(b)
+	}()
+
+	// Preallocate latency slice
+	latencies := make([]float64, 0, totalMessages)
+	var mu sync.Mutex
 
 	// Wait for all messages consumed
 	var done sync.WaitGroup
@@ -36,8 +40,19 @@ func main() {
 	// Consumer
 	go func() {
 		err := b.Consume(func(body []byte) {
+
+			ts := extractTimestamp(body)
+			now := time.Now().UnixNano()
+
+			latency := float64(now-ts) / 1e6 // ms
+
+			mu.Lock()
+			latencies = append(latencies, latency)
+			mu.Unlock()
+
 			done.Done()
 		})
+
 		if err != nil {
 			log.Fatal(err)
 		}
@@ -61,6 +76,11 @@ func main() {
 			startIdx := pid * messagesPerProducer
 			endIdx := startIdx + messagesPerProducer
 
+			// Fix: ensure all messages are sent
+			if pid == producerCount-1 {
+				endIdx = totalMessages
+			}
+
 			for i := startIdx; i < endIdx; i++ {
 
 				msg := generateMessage(i, messageSize)
@@ -80,13 +100,22 @@ func main() {
 
 	fmt.Println("Total messages:", totalMessages)
 	fmt.Println("Producers:", producerCount)
-	fmt.Println("Message size:", messageSize)
+	fmt.Println("Message size:", messageSize, "bytes")
 	fmt.Println("Time taken:", duration)
 	fmt.Println("Throughput:", float64(totalMessages)/duration.Seconds(), "msg/sec")
+
+	avg, p50, p95, p99 := calculateStats(latencies)
+
+	fmt.Println("Avg latency (ms):", avg)
+	fmt.Println("P50 latency (ms):", p50)
+	fmt.Println("P95 latency (ms):", p95)
+	fmt.Println("P99 latency (ms):", p99)
 }
 
 func generateMessage(i int, size int) []byte {
-	base := fmt.Sprintf("msg-%d-", i)
+	timestamp := time.Now().UnixNano()
+
+	base := fmt.Sprintf("%d|msg-%d-", timestamp, i)
 
 	padding := size - len(base)
 	if padding < 0 {
@@ -94,4 +123,41 @@ func generateMessage(i int, size int) []byte {
 	}
 
 	return []byte(base + string(make([]byte, padding)))
+}
+
+func extractTimestamp(msg []byte) int64 {
+	var ts int64
+	_, err := fmt.Sscanf(string(msg), "%d|", &ts)
+	if err != nil {
+		return 0
+	}
+	return ts
+}
+
+func calculateStats(latencies []float64) (avg, p50, p95, p99 float64) {
+
+	sort.Float64s(latencies)
+
+	n := len(latencies)
+	if n == 0 {
+		return
+	}
+
+	sum := 0.0
+	for _, l := range latencies {
+		sum += l
+	}
+
+	avg = sum / float64(n)
+
+	p50 = percentile(latencies, 0.50)
+	p95 = percentile(latencies, 0.95)
+	p99 = percentile(latencies, 0.99)
+
+	return
+}
+
+func percentile(latencies []float64, p float64) float64 {
+	index := int(float64(len(latencies)-1) * p)
+	return latencies[index]
 }
