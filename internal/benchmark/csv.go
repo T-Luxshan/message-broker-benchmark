@@ -6,6 +6,7 @@ import (
 	"strconv"
 )
 
+// Result struct
 type Result struct {
 	Broker        string
 	Scenario      string

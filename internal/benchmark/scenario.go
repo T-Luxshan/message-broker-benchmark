@@ -1,6 +1,6 @@
 package benchmark
 
-// Scenario : struct to define different workloads
+// Scenario : To define different workloads
 type Scenario struct {
 	Name          string
 	TotalMessages int

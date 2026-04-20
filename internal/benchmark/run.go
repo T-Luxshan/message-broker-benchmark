@@ -16,7 +16,12 @@ func Run(b broker.Broker, sc Scenario) (throughput, avg, p50, p95, p99 float64) 
 	if err != nil {
 		log.Fatal(err)
 	}
-	defer b.Close()
+	defer func(b broker.Broker) {
+		err := b.Close()
+		if err != nil {
+			log.Fatal(err)
+		}
+	}(b)
 
 	latencies := make([]float64, 0, sc.TotalMessages)
 	var mu sync.Mutex
@@ -65,7 +70,10 @@ func Run(b broker.Broker, sc Scenario) (throughput, avg, p50, p95, p99 float64) 
 
 			for i := startIdx; i < endIdx; i++ {
 				msg := generateMessage(i, sc.MessageSize)
-				b.Publish(msg)
+				err := b.Publish(msg)
+				if err != nil {
+					return
+				}
 			}
 		}(p)
 	}
