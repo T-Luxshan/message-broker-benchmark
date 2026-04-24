@@ -40,13 +40,13 @@ func (k *KafkaBroker) Publish(msg []byte) error {
 	)
 }
 
-func (k *KafkaBroker) Consume(handler func([]byte)) error {
+func (k *KafkaBroker) Consume(ctx context.Context, handler func([]byte)) error {
 	log.Println("Kafka consumer started")
 	for {
-		m, err := k.reader.ReadMessage(context.Background())
+		m, err := k.reader.ReadMessage(ctx)
 		if err != nil {
-			log.Println("consume error:", err)
-			continue
+			// stop when context is cancelled
+			return err
 		}
 		log.Println("message received")
 		handler(m.Value)

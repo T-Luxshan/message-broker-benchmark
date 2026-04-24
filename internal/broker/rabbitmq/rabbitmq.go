@@ -1,6 +1,7 @@
 package rabbitmq
 
 import (
+	"context"
 	"log"
 
 	amqp "github.com/rabbitmq/amqp091-go"
@@ -66,7 +67,7 @@ func (r *RabbitMQ) Publish(body []byte) error {
 	)
 }
 
-func (r *RabbitMQ) Consume(handler func([]byte)) error {
+func (r *RabbitMQ) Consume(ctx context.Context, handler func([]byte)) error {
 
 	msgs, err := r.ch.Consume(
 		r.queue.Name,

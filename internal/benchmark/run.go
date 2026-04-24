@@ -1,6 +1,7 @@
 package benchmark
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"sort"
@@ -12,45 +13,64 @@ import (
 
 func Run(b broker.Broker, sc Scenario) (throughput, avg, p50, p95, p99 float64) {
 
+	// -------------------------
+	// CONNECT BROKER
+	// -------------------------
 	err := b.Connect()
 	if err != nil {
 		log.Fatal(err)
 	}
-	defer func(b broker.Broker) {
-		err := b.Close()
-		if err != nil {
-			log.Fatal(err)
-		}
-	}(b)
 
+	defer func() {
+		_ = b.Close()
+	}()
+
+	// -------------------------
+	// METRICS STORAGE
+	// -------------------------
 	latencies := make([]float64, 0, sc.TotalMessages)
 	var mu sync.Mutex
 
-	var done sync.WaitGroup
-	done.Add(sc.TotalMessages)
+	received := 0
+	done := make(chan struct{})
+
+	// -------------------------
+	// CONSUMER (ASYNC)
+	// -------------------------
+	ctx, cancel := context.WithCancel(context.Background())
 
 	go func() {
-		err := b.Consume(func(body []byte) {
+		err := b.Consume(ctx, func(body []byte) {
+
 			ts := extractTimestamp(body)
 			now := time.Now().UnixNano()
 
-			lat := float64(now-ts) / 1e6
+			lat := float64(now-ts) / 1e6 // ms
 
 			mu.Lock()
 			latencies = append(latencies, lat)
 			mu.Unlock()
 
-			done.Done()
+			received++
+			if received >= sc.TotalMessages {
+				done <- struct{}{}
+				cancel() // IMPORTANT: stop Kafka consumer
+			}
 		})
+
 		if err != nil {
-			log.Fatal(err)
+			log.Println("consume error:", err)
 		}
 	}()
 
-	time.Sleep(time.Second)
+	// allow consumer to initialize
+	time.Sleep(1 * time.Second)
 
 	start := time.Now()
 
+	// -------------------------
+	// PRODUCERS
+	// -------------------------
 	var prodWg sync.WaitGroup
 	prodWg.Add(sc.Producers)
 
@@ -69,9 +89,12 @@ func Run(b broker.Broker, sc Scenario) (throughput, avg, p50, p95, p99 float64) 
 			}
 
 			for i := startIdx; i < endIdx; i++ {
+
 				msg := generateMessage(i, sc.MessageSize)
+
 				err := b.Publish(msg)
 				if err != nil {
+					log.Println("publish error:", err)
 					return
 				}
 			}
@@ -79,23 +102,43 @@ func Run(b broker.Broker, sc Scenario) (throughput, avg, p50, p95, p99 float64) 
 	}
 
 	prodWg.Wait()
-	done.Wait()
+
+	// -------------------------
+	// WAIT FOR CONSUMPTION END
+	// -------------------------
+	<-done
 
 	duration := time.Since(start)
 
+	// -------------------------
+	// THROUGHPUT
+	// -------------------------
 	throughput = float64(sc.TotalMessages) / duration.Seconds()
+
+	// -------------------------
+	// STATS
+	// -------------------------
 	avg, p50, p95, p99 = calculateStats(latencies)
 
 	return
 }
 
+//
+// -------------------------
+// HELPERS
+// -------------------------
+//
+
 func generateMessage(i int, size int) []byte {
 	ts := time.Now().UnixNano()
+
 	base := fmt.Sprintf("%d|msg-%d-", ts, i)
+
 	padding := size - len(base)
 	if padding < 0 {
 		padding = 0
 	}
+
 	return []byte(base + string(make([]byte, padding)))
 }
 
@@ -106,15 +149,19 @@ func extractTimestamp(msg []byte) int64 {
 }
 
 func calculateStats(latencies []float64) (avg, p50, p95, p99 float64) {
+
+	if len(latencies) == 0 {
+		return
+	}
+
 	sort.Float64s(latencies)
 
-	n := len(latencies)
 	sum := 0.0
 	for _, l := range latencies {
 		sum += l
 	}
 
-	avg = sum / float64(n)
+	avg = sum / float64(len(latencies))
 
 	p50 = percentile(latencies, 0.50)
 	p95 = percentile(latencies, 0.95)
