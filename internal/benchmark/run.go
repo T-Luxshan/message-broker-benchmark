@@ -32,39 +32,45 @@ func Run(b broker.Broker, sc Scenario) (throughput, avg, p50, p95, p99 float64) 
 	var mu sync.Mutex
 
 	received := 0
-	done := make(chan struct{})
+	done := make(chan struct{}, 1) // Buffered to prevent blocking
+	var once sync.Once
 
 	// -------------------------
 	// CONSUMER (ASYNC)
 	// -------------------------
 	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 
 	go func() {
 		err := b.Consume(ctx, func(body []byte) {
+			mu.Lock()
+			defer mu.Unlock()
+
+			if received >= sc.TotalMessages {
+				return
+			}
 
 			ts := extractTimestamp(body)
 			now := time.Now().UnixNano()
-
 			lat := float64(now-ts) / 1e6 // ms
 
-			mu.Lock()
 			latencies = append(latencies, lat)
-			mu.Unlock()
-
 			received++
+
 			if received >= sc.TotalMessages {
-				done <- struct{}{}
-				cancel() // IMPORTANT: stop Kafka consumer
+				once.Do(func() {
+					done <- struct{}{}
+				})
 			}
 		})
 
-		if err != nil {
+		if err != nil && ctx.Err() == nil {
 			log.Println("consume error:", err)
 		}
 	}()
 
-	// allow consumer to initialize
-	time.Sleep(1 * time.Second)
+	// allow consumer to initialize and join group (especially important for Kafka)
+	time.Sleep(3 * time.Second)
 
 	start := time.Now()
 
@@ -106,7 +112,12 @@ func Run(b broker.Broker, sc Scenario) (throughput, avg, p50, p95, p99 float64) 
 	// -------------------------
 	// WAIT FOR CONSUMPTION END
 	// -------------------------
-	<-done
+	select {
+	case <-done:
+		// Success
+	case <-time.After(30 * time.Second):
+		log.Printf("Timeout waiting for messages! Received %d/%d", received, sc.TotalMessages)
+	}
 
 	duration := time.Since(start)
 

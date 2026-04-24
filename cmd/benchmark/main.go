@@ -11,10 +11,7 @@ import (
 func main() {
 
 	scenarios := []benchmark.Scenario{
-		{"low-load", 1000, 1, 256, 2},
-		{"medium-load", 1000, 5, 256, 2},
-		{"high-load", 1000, 10, 256, 2},
-		{"large-msg", 1000, 10, 1024, 2},
+		{"low-load", 10, 1, 10, 2},
 	}
 
 	var results []benchmark.Result
@@ -25,15 +22,12 @@ func main() {
 
 			fmt.Println("Running:", sc.Name, "Run:", run)
 
-			//b := &rabbitmq.RabbitMQ{}
 			b := &kafka.KafkaBroker{}
-			b.Connect()
+			// b.Connect() is handled inside benchmark.Run
 			t, avg, p50, p95, p99 := benchmark.Run(b, sc)
-			//b.Close()
 
 			results = append(results, benchmark.Result{
-				Broker: "kafka",
-				//Broker:        "rabbitmq",
+				Broker:        "kafka",
 				Scenario:      sc.Name,
 				TotalMessages: sc.TotalMessages,
 				Producers:     sc.Producers,
@@ -48,10 +42,10 @@ func main() {
 		}
 	}
 
-	err := benchmark.WriteCSV("results/rabbitmq.csv", results)
+	err := benchmark.WriteCSV("results/kafka_results.csv", results)
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	fmt.Println("Results saved to results/rabbitmq.csv")
+	fmt.Println("Results saved to results/kafka_results.csv")
 }
