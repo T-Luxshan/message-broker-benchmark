@@ -3,9 +3,9 @@ package main
 import (
 	"fmt"
 	"log"
+	"message-broker-benchmark/internal/broker/kafka"
 
 	"message-broker-benchmark/internal/benchmark"
-	"message-broker-benchmark/internal/broker/rabbitmq"
 )
 
 func main() {
@@ -25,12 +25,15 @@ func main() {
 
 			fmt.Println("Running:", sc.Name, "Run:", run)
 
-			b := &rabbitmq.RabbitMQ{}
-
+			//b := &rabbitmq.RabbitMQ{}
+			b := &kafka.KafkaBroker{}
+			b.Connect()
 			t, avg, p50, p95, p99 := benchmark.Run(b, sc)
+			//b.Close()
 
 			results = append(results, benchmark.Result{
-				Broker:        "rabbitmq",
+				Broker: "kafka",
+				//Broker:        "rabbitmq",
 				Scenario:      sc.Name,
 				TotalMessages: sc.TotalMessages,
 				Producers:     sc.Producers,
