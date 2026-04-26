@@ -11,18 +11,16 @@ type Redis struct {
 	client  *redis.Client
 	pubsub  *redis.PubSub
 	channel string
-	ctx     context.Context
 }
 
 func (r *Redis) Connect() error {
-	r.ctx = context.Background()
 
 	r.client = redis.NewClient(&redis.Options{
 		Addr: "localhost:6379",
 	})
 
-	// simple ping check
-	if err := r.client.Ping(r.ctx).Err(); err != nil {
+	// health check
+	if err := r.client.Ping(context.Background()).Err(); err != nil {
 		return err
 	}
 
@@ -34,25 +32,43 @@ func (r *Redis) Close() error {
 	if r.pubsub != nil {
 		_ = r.pubsub.Close()
 	}
-	return r.client.Close()
+	if r.client != nil {
+		return r.client.Close()
+	}
+	return nil
 }
 
 func (r *Redis) Publish(body []byte) error {
-	return r.client.Publish(r.ctx, r.channel, body).Err()
+	return r.client.Publish(context.Background(), r.channel, body).Err()
 }
 
-func (r *Redis) Consume(handler func([]byte)) error {
-	r.pubsub = r.client.Subscribe(r.ctx, r.channel)
+func (r *Redis) Consume(ctx context.Context, handler func([]byte)) error {
+
+	r.pubsub = r.client.Subscribe(ctx, r.channel)
 
 	ch := r.pubsub.Channel()
 
-	log.Println("Waiting for Redis messages...")
+	log.Println("Redis consumer started")
 
+	// message processing
 	go func() {
-		for msg := range ch {
-			handler([]byte(msg.Payload))
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case msg, ok := <-ch:
+				if !ok {
+					return
+				}
+				handler([]byte(msg.Payload))
+			}
 		}
 	}()
 
-	select {}
+	// block until cancelled
+	<-ctx.Done()
+
+	log.Println("Redis consumer stopping")
+
+	return nil
 }

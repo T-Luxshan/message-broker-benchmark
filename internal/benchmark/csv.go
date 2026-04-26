@@ -26,12 +26,7 @@ func WriteCSV(path string, results []Result) error {
 	if err != nil {
 		return err
 	}
-	defer func(f *os.File) {
-		err := f.Close()
-		if err != nil {
-			panic(err)
-		}
-	}(f)
+	defer f.Close()
 
 	w := csv.NewWriter(f)
 	defer w.Flush()
@@ -53,7 +48,7 @@ func WriteCSV(path string, results []Result) error {
 			strconv.Itoa(r.Producers),
 			strconv.Itoa(r.MessageSize),
 			strconv.Itoa(r.Run),
-			strconv.FormatFloat(r.Throughput, 'f', 2, 64),
+			strconv.FormatFloat(r.Throughput, 'f', 6, 64),
 			strconv.FormatFloat(r.AvgLatency, 'f', 2, 64),
 			strconv.FormatFloat(r.P50, 'f', 2, 64),
 			strconv.FormatFloat(r.P95, 'f', 2, 64),

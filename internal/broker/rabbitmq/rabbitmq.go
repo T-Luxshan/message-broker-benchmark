@@ -33,7 +33,6 @@ func (r *RabbitMQ) Connect() error {
 		false,
 		nil,
 	)
-
 	if err != nil {
 		return err
 	}
@@ -46,11 +45,13 @@ func (r *RabbitMQ) Connect() error {
 }
 
 func (r *RabbitMQ) Close() error {
-	err := r.ch.Close()
-	if err != nil {
-		return err
+	if r.ch != nil {
+		_ = r.ch.Close()
 	}
-	return r.conn.Close()
+	if r.conn != nil {
+		return r.conn.Close()
+	}
+	return nil
 }
 
 func (r *RabbitMQ) Publish(body []byte) error {
@@ -78,17 +79,31 @@ func (r *RabbitMQ) Consume(ctx context.Context, handler func([]byte)) error {
 		false,
 		nil,
 	)
-
 	if err != nil {
 		return err
 	}
 
+	log.Println("RabbitMQ consumer started")
+
+	// process messages
 	go func() {
-		for msg := range msgs {
-			handler(msg.Body)
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case msg, ok := <-msgs:
+				if !ok {
+					return
+				}
+				handler(msg.Body)
+			}
 		}
 	}()
 
-	log.Println("Waiting for messages...")
-	select {}
+	// block until context cancellation
+	<-ctx.Done()
+
+	log.Println("RabbitMQ consumer stopping")
+
+	return nil
 }
